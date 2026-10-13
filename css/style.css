@@ -139,7 +139,45 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .zoom output { font-variant-numeric: tabular-nums; min-width: 3.2em; }
 
 .plan { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.plan-scroll { flex: 1; min-height: 0; overflow: auto; padding: 34px 24px 18px; }
+.plan-scroll { flex: 1; min-height: 0; overflow: auto; padding: 16px 16px 20px; }
+
+/* examples: one card per wall layout, stacked */
+.examples { display: grid; gap: 16px; }
+.ex {
+  position: relative;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: rgba(17, 24, 37, .6);
+  padding: 10px 14px 8px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.ex:hover { border-color: var(--line-2); }
+.ex.active { border-color: var(--gold); background: rgba(24, 30, 42, .85); cursor: default; box-shadow: 0 0 0 3px rgba(217, 180, 106, .12); }
+.ex-h { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.ex-n {
+  flex: none; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px;
+  background: var(--raise); color: var(--muted); font: 700 12px/1 var(--mono);
+}
+.ex.active .ex-n { background: var(--gold); color: var(--gold-ink); }
+input.ex-name {
+  width: 160px; padding: 3px 8px; border-color: transparent; background: transparent;
+  font: 600 15px/1.3 var(--display); color: var(--gold-2);
+}
+input.ex-name:hover, input.ex-name:focus { border-color: var(--line-2); background: var(--bg); }
+.ex-sum { color: var(--muted); font-size: 12.5px; flex: 1 1 180px; min-width: 0; }
+.ex-tools { display: none; flex-wrap: wrap; gap: 6px; }
+.ex.active .ex-tools { display: flex; }
+.ex-tools svg, .room-btn svg { width: 14px; height: 14px; }
+.room-btn { border-color: rgba(217, 180, 106, .5); color: var(--gold-2); }
+.ex-body { overflow-x: auto; padding: 34px 0 2px; }
+.ex-empty {
+  position: absolute; inset: 0; margin: 0; padding: 0 24px;
+  display: grid; place-items: center; text-align: center; direction: rtl;
+  color: var(--muted); font-size: 13px; pointer-events: none;
+}
+.ex-add { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding: 18px 0 4px; }
+.room-ex { position: absolute; top: 12px; left: 12px; display: flex; flex-wrap: wrap; gap: 6px; max-width: 60%; }
+.stage.presenting .room-ex, .stage.presenting .ex-add, .stage.presenting .ex-h .ex-tools { display: none; }
 .plan-inner { position: relative; margin: 0 auto; width: max-content; padding-left: 78px; }
 
 .wall {
@@ -218,18 +256,26 @@ button, input, select, textarea { font: inherit; color: inherit; }
   cursor: nwse-resize; display: none;
 }
 .scr.sel .handle { display: block; }
-.dim-tag {
-  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
-  background: var(--gold); color: var(--gold-ink);
-  font: 600 10.5px/1 var(--mono); padding: 4px 6px; border-radius: 4px; white-space: nowrap;
-  pointer-events: none; display: none; direction: rtl;
+.tb {
+  position: absolute; bottom: calc(100% + 7px); left: 50%; transform: translateX(-50%); z-index: 6;
+  display: none; align-items: center; gap: 2px; padding: 3px;
+  background: var(--gold); border-radius: 7px; box-shadow: 0 6px 16px rgba(0, 0, 0, .55);
+  direction: rtl; white-space: nowrap; cursor: default;
 }
-.scr.sel .dim-tag { display: block; }
+.scr.sel .tb { display: flex; }
+.scr.dragging .tb { display: none; }
+.tb-dim { font: 600 10.5px/1 var(--mono); color: var(--gold-ink); padding: 0 6px; }
+.tb button {
+  display: grid; place-items: center; width: 26px; height: 24px; border: 0; border-radius: 5px;
+  background: rgba(36, 26, 8, .12); color: var(--gold-ink); cursor: pointer;
+}
+.tb button:hover { background: rgba(36, 26, 8, .28); }
+.tb button svg { width: 15px; height: 15px; }
 .scr.tight .cap { display: none; }
 .scr.tight.sel .cap { display: block; z-index: 5; background: var(--bg); border-radius: 4px; padding: 2px 4px; }
 
 .dir-arrow {
-  position: relative; margin-top: 46px; height: 26px; direction: ltr;
+  position: relative; margin-top: 40px; height: 26px; direction: ltr;
 }
 .dir-arrow::before {
   content: ""; position: absolute; left: 10px; right: 0; top: 6px; height: 2px; background: var(--gold);
@@ -423,7 +469,6 @@ td .n { display: inline-grid; place-items: center; width: 22px; height: 22px; bo
 /* presentation */
 .stage.presenting { position: fixed; inset: 0; z-index: 40; }
 .stage.presenting .stage-bar, .stage.presenting .room-cams, .stage.presenting .room-hint { display: none; }
-.stage.presenting .plan-scroll { display: grid; place-items: center; }
 .exit-present { position: absolute; top: 12px; left: 12px; z-index: 5; opacity: .35; }
 .exit-present:hover { opacity: 1; }
 

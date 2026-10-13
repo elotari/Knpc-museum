@@ -24,6 +24,10 @@
     soundOn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z" fill="currentColor"/><path d="M16 8.5a5 5 0 0 1 0 7M18.6 6a8.5 8.5 0 0 1 0 12" stroke-linecap="round"/></svg>',
     // RTL: "back" points right, so the undo arrow is the mirrored one
     undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>',
+    rotate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="11" height="13" rx="1.5"/><path d="M12 3h3a6 6 0 0 1 6 6v2"/><path d="M18.5 8.5L21 11l2.5-2.5" transform="translate(-2 0)"/></svg>',
+    copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+    cube: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5l8.5 4.75v9.5L12 21.5l-8.5-4.75v-9.5z"/><path d="M3.5 7.25L12 12l8.5-4.75M12 12v9.5"/></svg>',
     redo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>',
   };
 
@@ -36,21 +40,19 @@
   let seq = 0;
   const uid = () => 's' + Date.now().toString(36) + (seq++).toString(36);
 
-  const S = {
-    wall: { length: 2600, height: 420, arc: 220 },
-    screens: [],
-    snap: 10,
-    dir: 'rtl',
-    mode: 'independent',
-    labels: true,
-    eye: true,
-    ghost: true,
-    g: Object.assign({}, DEFAULT_G),
-    view: 'plan',
-    zoom: 1,
-  };
+  // settings that belong to the editor, not to an example
+  const UI = { snap: 10, labels: true, eye: true, ghost: true, view: 'plan', zoom: 1 };
+  const MODE_KEYS = ['independent', 'span', 'mirror', 'travel'];
+
+  // each example is a full wall layout with its own playback settings
+  function newExample(name, screens) {
+    return { id: 'x' + uid(), name, wall: { length: 2600, height: 420, arc: 220 }, screens: screens || [], dir: 'rtl', mode: 'independent', g: Object.assign({}, DEFAULT_G) };
+  }
+  let examples = [];
+  let ACT = null; // the example the panels are editing
+  let S = null;   // the example being worked on right now (ACT, except while the render loop walks every example)
   let selected = null;
-  const P = { playing: true, sound: false, clock: 0, idx: 0, prev: -1, fade: 1, tt: 0 };
+  const P = { playing: true, sound: false, clock: 0 };
 
   function knpcPreset(L) {
     // المخطط الحالي: 13 شاشة (10 أفقية و3 عمودية) مقروءة من اليمين لليسار
@@ -92,8 +94,7 @@
       return (b.y + b.h) - (a.y + a.h);
     });
   }
-  let numbers = new Map();
-  function renumber() { numbers = new Map(ordered().map((s, i) => [s.id, i + 1])); }
+  function renumber() { numbers = new Map(ordered().map((s, i) => [s.id, i + 1])); if (cur) cur.numbers = numbers; }
   function bbox(list) {
     const l = list || S.screens;
     if (!l.length) return { x: 0, y: 0, w: S.wall.length, h: S.wall.height };
@@ -110,7 +111,7 @@
 
   /* ---------- history + persistence ---------- */
   const hist = { stack: [], i: -1 };
-  const snap = () => JSON.stringify({ wall: S.wall, screens: S.screens });
+  const snap = () => JSON.stringify({ examples, active: ACT.id });
   function commit() {
     const s = snap();
     if (hist.stack[hist.i] !== s) {
@@ -123,34 +124,68 @@
   }
   function applySnap(s) {
     const d = JSON.parse(s);
-    S.wall = d.wall; S.screens = d.screens;
+    examples = d.examples;
+    ACT = examples.find((x) => x.id === d.active) || examples[0];
+    use(ACT);
     if (selected && !get(selected)) selected = null;
-    refresh();
+    refresh(); renderDisplay();
   }
   function undo() { if (hist.i > 0) { hist.i--; applySnap(hist.stack[hist.i]); } }
   function redo() { if (hist.i < hist.stack.length - 1) { hist.i++; applySnap(hist.stack[hist.i]); } }
 
+  const LS_V2 = 'knpc-wall-planner:v2';
   let saveT = 0;
   function persisted() {
-    return { v: 1, wall: S.wall, screens: S.screens, snap: S.snap, dir: S.dir, mode: S.mode, labels: S.labels, eye: S.eye, ghost: S.ghost, g: S.g };
+    return { v: 2, examples, active: ACT.id, ui: { snap: UI.snap, labels: UI.labels, eye: UI.eye, ghost: UI.ghost } };
   }
   function save() {
     clearTimeout(saveT);
-    saveT = setTimeout(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(persisted())); } catch (e) { /* storage off */ } }, 300);
+    saveT = setTimeout(() => { try { localStorage.setItem(LS_V2, JSON.stringify(persisted())); } catch (e) { /* storage off */ } }, 300);
   }
-  function applyData(d) {
-    if (!d || !Array.isArray(d.screens) || !d.wall) return false;
-    S.wall = Object.assign({ length: 2600, height: 420, arc: 220 }, d.wall);
-    S.screens = d.screens.map((s) => Object.assign({ id: uid(), label: '', media: null, fit: 'cover' }, s));
-    ['snap', 'dir', 'mode', 'labels', 'eye', 'ghost'].forEach((k) => { if (d[k] !== undefined) S[k] = d[k]; });
-    S.g = Object.assign({}, DEFAULT_G, d.g || {});
-    return true;
+  // accepts one example (or a layout saved by the first version of the tool)
+  function normalizeExample(d, name, keepIds) {
+    if (!d || !Array.isArray(d.screens) || !d.wall) return null;
+    return {
+      id: keepIds && d.id ? d.id : 'x' + uid(),
+      name: d.name || name || 'مثال',
+      wall: Object.assign({ length: 2600, height: 420, arc: 220 }, d.wall),
+      screens: d.screens.map((s) => Object.assign({ label: '', media: null, fit: 'cover' }, s, keepIds && s.id ? {} : { id: uid() })),
+      dir: d.dir === 'ltr' ? 'ltr' : 'rtl',
+      mode: MODE_KEYS.includes(d.mode) ? d.mode : 'independent',
+      g: Object.assign({}, DEFAULT_G, d.g || {}),
+    };
+  }
+  function examplesFrom(d) {
+    if (d && d.v === 2 && Array.isArray(d.examples)) return d.examples.map((x) => normalizeExample(x)).filter(Boolean);
+    const one = normalizeExample(d, 'مثال مستورد');
+    return one ? [one] : [];
   }
   function load() {
-    try { return applyData(JSON.parse(localStorage.getItem(LS_KEY))); } catch (e) { return false; }
+    try {
+      const d = JSON.parse(localStorage.getItem(LS_V2));
+      if (d && d.v === 2 && Array.isArray(d.examples)) {
+        examples = d.examples.map((x) => normalizeExample(x, null, true)).filter(Boolean);
+        if (examples.length) {
+          ['snap', 'labels', 'eye', 'ghost'].forEach((k) => { if (d.ui && d.ui[k] !== undefined) UI[k] = d.ui[k]; });
+          ACT = examples.find((x) => x.id === d.active) || examples[0];
+          return true;
+        }
+      }
+    } catch (e) { /* fall through */ }
+    // first version kept one layout plus a list of saved scenarios: turn them into examples
+    try {
+      const old = JSON.parse(localStorage.getItem(LS_KEY));
+      const first = normalizeExample(old, 'المخطط الحالي', true);
+      if (!first) return false;
+      examples = [first];
+      ['snap', 'labels', 'eye', 'ghost'].forEach((k) => { if (old[k] !== undefined) UI[k] = old[k]; });
+      let sc = [];
+      try { sc = JSON.parse(localStorage.getItem(LS_SC)) || []; } catch (e) { /* none */ }
+      sc.forEach((x) => { const ex = normalizeExample(x.data, x.name); if (ex) examples.push(ex); });
+      ACT = first;
+      return true;
+    } catch (e) { return false; }
   }
-  function scenarios() { try { return JSON.parse(localStorage.getItem(LS_SC)) || []; } catch (e) { return []; } }
-  function setScenarios(list) { try { localStorage.setItem(LS_SC, JSON.stringify(list)); } catch (e) { toast('تعذّر الحفظ: التخزين غير متاح في هذا المتصفح'); } }
 
   /* ---------- toast ---------- */
   let toastT = 0;
@@ -164,17 +199,61 @@
   /* =====================================================================
      PLAN VIEW
      ===================================================================== */
-  const wallEl = $('#wall'), ghost = $('#ghost'), gctx = ghost.getContext('2d');
-  const views = new Map(); // id -> { el, canvas, ctx, badge, cap, dim }
-  let scale = 0.5, fitScale = 0.5;
+  const RT = new Map(); // example id -> its cards, canvases and playback state
+  let cur = null, views = null, wallEl = null, ghost = null, gctx = null, scale = 0.5, fitScale = 0.5, T = null;
+  let numbers = new Map();
+
+  function use(ex) {
+    S = ex; cur = rtFor(ex);
+    views = cur.views; wallEl = cur.wallEl; ghost = cur.ghost; gctx = cur.gctx; scale = cur.scale; T = cur.T; numbers = cur.numbers;
+  }
+  const exOf = (r) => examples.find((x) => x.id === r.card.dataset.ex) || null;
+
+  function rtFor(ex) {
+    let r = RT.get(ex.id);
+    if (r) return r;
+    const card = document.createElement('article');
+    card.className = 'ex'; card.dataset.ex = ex.id;
+    card.innerHTML = `
+      <header class="ex-h">
+        <span class="ex-n"></span>
+        <input type="text" class="ex-name" maxlength="60" aria-label="اسم المثال">
+        <span class="ex-sum"></span>
+        <span class="ex-tools">
+          <button type="button" class="btn sm" data-ex-act="addh">+ شاشة أفقية</button>
+          <button type="button" class="btn sm" data-ex-act="addv">+ شاشة عمودية</button>
+          <button type="button" class="btn sm" data-ex-act="dup">${ICON.copy}نسخ المثال</button>
+          <button type="button" class="btn sm danger" data-ex-act="del">${ICON.trash}<span>حذف المثال</span></button>
+        </span>
+        <button type="button" class="btn sm room-btn" data-ex-act="room">${ICON.cube}الغرفة ثلاثية الأبعاد</button>
+      </header>
+      <div class="ex-body"><div class="plan-inner">
+        <div class="wall"><canvas class="ghost"></canvas><div class="eye-line"><span>مستوى النظر</span></div><div class="ruler"></div><div class="vruler"></div>
+          <p class="ex-empty">الجدار فارغ. اضغط مرتين على أي مكان في الجدار لإضافة شاشة، أو استخدم أزرار الإضافة بالأعلى.</p></div>
+        <div class="dir-arrow"><span>اتجاه المشاهدة</span></div>
+      </div></div>`;
+    $('#examples').appendChild(card);
+    const g = card.querySelector('.ghost');
+    r = {
+      card, wallEl: card.querySelector('.wall'), ghost: g, gctx: g.getContext('2d'), views: new Map(), scale: 0.5,
+      numbers: new Map(), T: { idx: 0, prev: -1, fade: 1, tt: 0 },
+      eye: card.querySelector('.eye-line'), ruler: card.querySelector('.ruler'), vruler: card.querySelector('.vruler'),
+      arrow: card.querySelector('.dir-arrow'), name: card.querySelector('.ex-name'), sum: card.querySelector('.ex-sum'),
+      num: card.querySelector('.ex-n'), empty: card.querySelector('.ex-empty'),
+    };
+    RT.set(ex.id, r);
+    bindWall(r);
+    return r;
+  }
 
   function computeScale() {
     const sc = $('#planScroll');
-    const pw = sc.clientWidth - 48 - 78, ph = sc.clientHeight - 120;
+    const pw = sc.clientWidth - 32 - 28 - 78, ph = sc.clientHeight - 170;
     // fit the whole wall, but never so small that a 55" screen shrinks below ~55px (phones scroll sideways instead)
     const fit = Math.min(pw / S.wall.length, ph / S.wall.height);
     fitScale = Math.max(0.05, Math.max(fit, Math.min(ph / S.wall.height, 0.45)));
-    scale = fitScale * S.zoom;
+    scale = fitScale * UI.zoom;
+    cur.scale = scale;
   }
 
   function viewFor(sc) {
@@ -182,10 +261,13 @@
     if (v) return v;
     const el = document.createElement('div');
     el.className = 'scr'; el.dataset.id = sc.id;
-    el.innerHTML = '<canvas></canvas><span class="badge"></span><span class="dim-tag"></span><span class="cap"><b></b><small></small></span><span class="handle" title="تغيير الحجم (Shift لتغيير النسبة)"></span>';
+    el.innerHTML = '<canvas></canvas><span class="badge"></span>'
+      + `<span class="tb"><span class="tb-dim"></span><button type="button" data-t="rot" title="تدوير: أفقية ↔ عمودية" aria-label="تدوير">${ICON.rotate}</button>`
+      + `<button type="button" data-t="dup" title="تكرار الشاشة" aria-label="تكرار">${ICON.copy}</button><button type="button" data-t="del" title="حذف الشاشة" aria-label="حذف">${ICON.trash}</button></span>`
+      + '<span class="cap"><b></b><small></small></span><span class="handle" title="تغيير الحجم (Shift لتغيير النسبة)"></span>';
     wallEl.appendChild(el);
     const canvas = el.querySelector('canvas');
-    v = { el, canvas, ctx: canvas.getContext('2d'), badge: el.querySelector('.badge'), capB: el.querySelector('.cap b'), capS: el.querySelector('.cap small'), dim: el.querySelector('.dim-tag') };
+    v = { el, canvas, ctx: canvas.getContext('2d'), badge: el.querySelector('.badge'), capB: el.querySelector('.cap b'), capS: el.querySelector('.cap small'), dim: el.querySelector('.tb-dim') };
     views.set(sc.id, v);
     return v;
   }
@@ -229,7 +311,17 @@
     });
   }
 
-  function syncPlan() {
+  const MODE_NAMES = { independent: 'كل شاشة لحالها', span: 'ممتد على كل الشاشات', mirror: 'نفس المحتوى على الكل', travel: 'ينتقل بين الشاشات' };
+  function countText(ex) {
+    let h = 0, v = 0, q = 0;
+    ex.screens.forEach((s) => { const o = orient(s).key; if (o === 'h') h++; else if (o === 'v') v++; else q++; });
+    const sub = [];
+    if (h) sub.push(`${h} أفقية`); if (v) sub.push(`${v} عمودية`); if (q) sub.push(`${q} مربعة`);
+    return [`${ex.screens.length} شاشة`].concat(sub.length ? [sub.join(' و')] : []).join(' · ');
+  }
+
+  // lays out the example currently in use()
+  function layoutExample() {
     computeScale();
     wallEl.style.width = S.wall.length * scale + 'px';
     wallEl.style.height = S.wall.height * scale + 'px';
@@ -239,23 +331,42 @@
     views.forEach((v, id) => { if (!ids.has(id)) { v.el.remove(); views.delete(id); } });
     S.screens.forEach(layoutScreen);
     markTight();
-    $('#eyeLine').hidden = !S.eye;
-    $('#eyeLine').style.top = (S.wall.height - 160) * scale + 'px';
-    wallEl.classList.toggle('no-labels', !S.labels);
-    $('#dirArrow').classList.toggle('ltr', S.dir === 'ltr');
-    $('#dirArrow').style.width = S.wall.length * scale + 'px';
+    cur.eye.hidden = !UI.eye;
+    cur.eye.style.top = (S.wall.height - 160) * scale + 'px';
+    wallEl.classList.toggle('no-labels', !UI.labels);
+    cur.arrow.classList.toggle('ltr', S.dir === 'ltr');
+    cur.arrow.style.width = S.wall.length * scale + 'px';
+    cur.empty.hidden = S.screens.length > 0;
     renderRuler();
-    $('#zoomOut').textContent = Math.round(S.zoom * 100) + '%';
+    renderHeader();
+  }
+  function renderHeader() {
+    cur.num.textContent = examples.indexOf(S) + 1;
+    if (document.activeElement !== cur.name) cur.name.value = S.name;
+    cur.name.style.width = Math.min(300, Math.max(100, S.name.length * 11 + 34)) + 'px';
+    cur.sum.textContent = `${countText(S)} · ${MODE_NAMES[S.mode]}`;
+    cur.card.classList.toggle('active', S === ACT);
+  }
+
+  // every example: create/remove cards, keep their order, lay them out
+  function syncAll() {
+    const ids = new Set(examples.map((x) => x.id));
+    RT.forEach((r, id) => { if (!ids.has(id)) { r.card.remove(); RT.delete(id); } });
+    const box = $('#examples');
+    examples.forEach((ex, i) => { const r = rtFor(ex); if (box.children[i] !== r.card) box.insertBefore(r.card, box.children[i] || null); });
+    examples.forEach((ex) => { use(ex); renumber(); layoutExample(); });
+    use(ACT);
+    $('#zoomOut').textContent = Math.round(UI.zoom * 100) + '%';
   }
 
   function renderRuler() {
     const step = scale * 100 < 34 ? 200 : 100;
     let html = '';
     for (let x = 0; x <= S.wall.length; x += step) html += `<b style="left:${x * scale}px"><span>${x / 100}م</span></b>`;
-    $('#ruler').innerHTML = html;
+    cur.ruler.innerHTML = html;
     let v = '';
     for (let y = 0; y <= S.wall.height; y += 100) v += `<b style="top:${(S.wall.height - y) * scale}px"><span>${y / 100}م</span></b>`;
-    $('#vruler').innerHTML = v;
+    cur.vruler.innerHTML = v;
   }
 
   /* ---------- drag / resize on the wall ---------- */
@@ -268,24 +379,71 @@
     wallEl.appendChild(g); guides.push(g);
   }
 
-  wallEl.addEventListener('pointerdown', (e) => {
-    const el = e.target.closest('.scr');
-    if (!el) { select(null); return; }
-    const sc = get(el.dataset.id);
-    if (!sc) return;
-    select(sc.id);
-    drag = { id: sc.id, resize: e.target.classList.contains('handle'), sx: e.clientX, sy: e.clientY, o: Object.assign({}, sc), moved: false, el };
-    el.setPointerCapture(e.pointerId);
-    el.classList.add('dragging');
-    e.preventDefault();
-  });
-  wallEl.addEventListener('pointermove', (e) => {
+  function bindWall(r) {
+    const w = r.wallEl;
+    const activateHere = () => { const ex = exOf(r); if (ex && ex !== ACT) activate(ex); return ex; };
+    w.addEventListener('pointerdown', (e) => {
+      if (!activateHere()) return;
+      if (e.target.closest('.tb')) return;
+      const el = e.target.closest('.scr');
+      if (!el) { select(null); return; }
+      const sc = get(el.dataset.id);
+      if (!sc) return;
+      select(sc.id);
+      drag = { id: sc.id, resize: e.target.classList.contains('handle'), sx: e.clientX, sy: e.clientY, o: Object.assign({}, sc), moved: false, el };
+      el.setPointerCapture(e.pointerId);
+      el.classList.add('dragging');
+      e.preventDefault();
+    });
+    w.addEventListener('pointermove', onDragMove);
+    w.addEventListener('pointerup', endDrag);
+    w.addEventListener('pointercancel', endDrag);
+    // the toolbar on the selected screen
+    w.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-t]'); if (!b) return;
+      const sc = get(b.closest('.scr').dataset.id); if (!sc) return;
+      if (b.dataset.t === 'rot') rotateScreen(sc);
+      else if (b.dataset.t === 'dup') duplicateScreen(sc);
+      else if (b.dataset.t === 'del') deleteScreen(sc);
+    });
+    // double-click a screen to rotate it, or empty wall to add a screen there
+    w.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.tb') || e.target.classList.contains('handle')) return;
+      if (!activateHere()) return;
+      const el = e.target.closest('.scr');
+      if (el) { const sc = get(el.dataset.id); if (sc) rotateScreen(sc); return; }
+      const rect = w.getBoundingClientRect();
+      addScreenAt('h', (e.clientX - rect.left) / scale, S.wall.height - (e.clientY - rect.top) / scale);
+    });
+    // drop media from the library (or files from the desktop) onto a screen
+    w.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      $$('.scr.drop').forEach((x) => x.classList.remove('drop'));
+      const el = e.target.closest('.scr'); if (el) el.classList.add('drop');
+    });
+    w.addEventListener('dragleave', (e) => { const el = e.target.closest('.scr'); if (el) el.classList.remove('drop'); });
+    w.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      $$('.scr.drop').forEach((x) => x.classList.remove('drop'));
+      if (!activateHere()) return;
+      const el = e.target.closest('.scr');
+      const sc = el ? get(el.dataset.id) : null;
+      const mid = e.dataTransfer.getData('text/x-media-id');
+      if (mid && sc) { assign(sc.id, mid); return; }
+      const files = [...(e.dataTransfer.files || [])];
+      if (!files.length) return;
+      const added = await addFiles(files);
+      if (sc && added[0]) assign(sc.id, added[0].id);
+    });
+  }
+
+  function onDragMove(e) {
     if (!drag) return;
     const sc = get(drag.id); if (!sc) return;
     const dx = (e.clientX - drag.sx) / scale, dy = (e.clientY - drag.sy) / scale;
     if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 2 / scale) return;
     drag.moved = true;
-    const sn = S.snap, o = drag.o;
+    const sn = UI.snap, o = drag.o;
     clearGuides();
     if (drag.resize) {
       let w = Math.max(20, o.w + dx), h;
@@ -321,7 +479,7 @@
     S.screens.forEach((s) => { const v = views.get(s.id); if (v) v.badge.textContent = numbers.get(s.id); });
     layoutScreen(sc);
     updateInspectorValues();
-  });
+  }
   function endDrag() {
     if (!drag) return;
     drag.el.classList.remove('dragging');
@@ -329,29 +487,6 @@
     const moved = drag.moved; drag = null;
     if (moved) commit();
   }
-
-  wallEl.addEventListener('pointerup', endDrag);
-  wallEl.addEventListener('pointercancel', endDrag);
-
-  // drop media from the library (or files from the desktop) onto a screen
-  wallEl.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    $$('.scr.drop').forEach((x) => x.classList.remove('drop'));
-    const el = e.target.closest('.scr'); if (el) el.classList.add('drop');
-  });
-  wallEl.addEventListener('dragleave', (e) => { const el = e.target.closest('.scr'); if (el) el.classList.remove('drop'); });
-  wallEl.addEventListener('drop', async (e) => {
-    e.preventDefault();
-    $$('.scr.drop').forEach((x) => x.classList.remove('drop'));
-    const el = e.target.closest('.scr');
-    const sc = el ? get(el.dataset.id) : null;
-    const mid = e.dataTransfer.getData('text/x-media-id');
-    if (mid && sc) { assign(sc.id, mid); return; }
-    const files = [...(e.dataTransfer.files || [])];
-    if (!files.length) return;
-    const added = await addFiles(files);
-    if (sc && added[0]) assign(sc.id, added[0].id);
-  });
 
   /* =====================================================================
      RENDERING (all modes)
@@ -402,14 +537,14 @@
   function stepTravel(dt, list) {
     if (S.mode !== 'travel' || S.g.style !== 'jump' || !list.length) return;
     const m = Media.get(S.g.media);
-    if (P.idx >= list.length) P.idx = 0;
-    P.fade = Math.min(1, P.fade + dt / 0.6);
+    if (T.idx >= list.length) T.idx = 0;
+    T.fade = Math.min(1, T.fade + dt / 0.6);
     if (!P.playing) return;
     let dwell = S.g.dwell;
     if (S.g.whole && m && m.kind === 'video' && m.src.duration > 0) dwell = m.src.duration;
-    P.tt += dt;
-    if (P.tt >= dwell) {
-      P.tt = 0; P.prev = P.idx; P.idx = (P.idx + 1) % list.length; P.fade = S.g.fade ? 0 : 1;
+    T.tt += dt;
+    if (T.tt >= dwell) {
+      T.tt = 0; T.prev = T.idx; T.idx = (T.idx + 1) % list.length; T.fade = S.g.fade ? 0 : 1;
       if (m && m.kind === 'video' && (S.g.restart || S.g.whole)) { try { m.src.currentTime = 0; } catch (e) { /* ignore */ } }
     }
   }
@@ -439,8 +574,8 @@
           drawMedia(ctx, gm, win, r, cw, ch, 'cover');
           live = win.x < r.x + r.w && win.x + win.w > r.x;
         } else {
-          if (i === P.idx) { drawMedia(ctx, gm, r, r, cw, ch, sc.fit, P.fade); live = true; }
-          else if (i === P.prev && P.fade < 1) drawMedia(ctx, gm, r, r, cw, ch, sc.fit, 1 - P.fade);
+          if (i === T.idx) { drawMedia(ctx, gm, r, r, cw, ch, sc.fit, T.fade); live = true; }
+          else if (i === T.prev && T.fade < 1) drawMedia(ctx, gm, r, r, cw, ch, sc.fit, 1 - T.fade);
         }
       }
       if (v.live !== live) { v.live = live; v.el.classList.toggle('live', live); }
@@ -449,7 +584,7 @@
 
   function drawGhost() {
     gctx.clearRect(0, 0, ghost.width, ghost.height);
-    if (!S.ghost) return;
+    if (!UI.ghost) return;
     const gm = Media.get(S.g.media);
     const wallR = { x: 0, y: 0, w: S.wall.length, h: S.wall.height };
     const k = ghost.width / S.wall.length;
@@ -470,9 +605,12 @@
 
   function usedMedia() {
     const ids = new Set();
-    const addOwn = () => S.screens.forEach((s) => s.media && ids.add(s.media));
-    if (S.mode === 'independent') addOwn();
-    else { if (S.g.media) ids.add(S.g.media); if (S.mode === 'travel' && S.g.others === 'own') addOwn(); }
+    examples.forEach((ex) => {
+      if (UI.view === 'room' && ex !== ACT) return;
+      const addOwn = () => ex.screens.forEach((s) => s.media && ids.add(s.media));
+      if (ex.mode === 'independent') addOwn();
+      else { if (ex.g.media) ids.add(ex.g.media); if (ex.mode === 'travel' && ex.g.others === 'own') addOwn(); }
+    });
     return ids;
   }
   function syncVideos(used) {
@@ -491,10 +629,16 @@
     if (P.playing) P.clock += dt;
     const used = usedMedia();
     used.forEach((id) => { const m = Media.get(id); if (m && m.tick) m.tick(P.clock); });
-    const list = ordered();
-    stepTravel(dt, list);
-    drawAll(list);
-    if (S.view === 'plan') drawGhost(); else Room3D.render();
+    examples.forEach((ex) => {
+      if (UI.view === 'room' && ex !== ACT) return;
+      use(ex);
+      const list = ordered();
+      stepTravel(dt, list);
+      drawAll(list);
+      if (UI.view === 'plan') drawGhost();
+    });
+    use(ACT);
+    if (UI.view === 'room') Room3D.render();
     vidT -= dt; if (vidT <= 0) { syncVideos(used); vidT = 0.35; }
     statusT -= dt; if (statusT <= 0) { renderStatus(); statusT = 0.25; }
     requestAnimationFrame(frame);
@@ -524,7 +668,7 @@
     else if (S.mode === 'span') t = `«${gm ? gm.name : '—'}» ممتد على ${S.g.area === 'wall' ? 'الجدار كاملاً' : 'حدود الشاشات'}. الفراغات بين الشاشات تُخفي أجزاءً من الصورة.`;
     else if (S.mode === 'mirror') t = `«${gm ? gm.name : '—'}» يتكرر على كل الشاشات.`;
     else if (S.g.style === 'glide') t = `«${gm ? gm.name : '—'}» ينساب عبر الجدار ${S.dir === 'rtl' ? 'من اليمين لليسار' : 'من اليسار لليمين'} بسرعة ${S.g.speed} سم/ث.`;
-    else t = `«${gm ? gm.name : '—'}» الآن على الشاشة ${P.idx + 1} من ${S.screens.length}.`;
+    else t = `«${gm ? gm.name : '—'}» الآن على الشاشة ${T.idx + 1} من ${S.screens.length}.`;
     const el = $('#modeText'); if (el.textContent !== t) el.textContent = t;
   }
 
@@ -538,21 +682,17 @@
   }
 
   function renderCounts() {
-    const n = S.screens.length;
-    let h = 0, v = 0, q = 0;
-    S.screens.forEach((s) => { const o = orient(s).key; if (o === 'h') h++; else if (o === 'v') v++; else q++; });
-    const parts = [`${n} شاشة`];
-    const sub = [];
-    if (h) sub.push(`${h} أفقية`); if (v) sub.push(`${v} عمودية`); if (q) sub.push(`${q} مربعة`);
-    $('#countLine').textContent = parts.concat(sub.join(' و')).join(' · ') + ` · جدار ${S.wall.length / 100}×${S.wall.height / 100} م`;
-    const ci = $('#countInput'); if (document.activeElement !== ci) ci.value = n;
+    $('#countLine').textContent = `${S.name} · ${countText(S)} · جدار ${S.wall.length / 100}×${S.wall.height / 100} م`;
+    $$('[data-exname]').forEach((el) => { el.textContent = S.name; });
+    const ci = $('#countInput'); if (document.activeElement !== ci) ci.value = S.screens.length;
   }
 
   $('#btnPlay').addEventListener('click', togglePlay);
   function togglePlay() { P.playing = !P.playing; syncVideos(usedMedia()); renderTransport(); }
   $('#btnRestart').innerHTML = ICON.restart;
   $('#btnRestart').addEventListener('click', () => {
-    P.clock = 0; P.idx = 0; P.prev = -1; P.tt = 0; P.fade = 1;
+    P.clock = 0;
+    RT.forEach((r) => Object.assign(r.T, { idx: 0, prev: -1, tt: 0, fade: 1 }));
     Media.list().forEach((m) => { if (m.kind === 'video') try { m.src.currentTime = 0; } catch (e) { /* ignore */ } });
   });
   $('#btnSound').addEventListener('click', () => {
@@ -566,35 +706,44 @@
   $('#btnDock').addEventListener('click', () => {
     const d = $('#dock'); d.classList.toggle('collapsed');
     $('#btnDock').textContent = d.classList.contains('collapsed') ? 'إظهار اللوحات' : 'إخفاء اللوحات';
-    requestAnimationFrame(() => { syncPlan(); Room3D.resize(); });
+    requestAnimationFrame(() => { syncAll(); Room3D.resize(); });
   });
 
   $$('#viewSeg button').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
   function setView(v) {
-    S.view = v;
+    UI.view = v;
     $$('#viewSeg button').forEach((b) => b.classList.toggle('on', b.dataset.view === v));
     $('#plan').hidden = v !== 'plan';
     $('#room').hidden = v !== 'room';
     $('#zoomBox').hidden = v !== 'plan';
-    if (v === 'room') { Room3D.markDirty(); requestAnimationFrame(() => Room3D.resize()); }
-    else requestAnimationFrame(syncPlan);
+    if (v === 'room') { renderRoomExamples(); Room3D.markDirty(); requestAnimationFrame(() => Room3D.resize()); }
+    else requestAnimationFrame(() => { syncAll(); const r = RT.get(ACT.id); if (r) r.card.scrollIntoView({ block: 'nearest' }); });
   }
+  function renderRoomExamples() {
+    $('#roomEx').innerHTML = `<button type="button" class="btn sm" data-room-back>رجوع للأمثلة</button>`
+      + (examples.length > 1 ? `<div class="seg sm">${examples.map((x) => `<button type="button" data-room-ex="${x.id}"${x === ACT ? ' class="on"' : ''}>${esc(x.name)}</button>`).join('')}</div>` : '');
+  }
+  $('#roomEx').addEventListener('click', (e) => {
+    if (e.target.closest('[data-room-back]')) { setView('plan'); return; }
+    const b = e.target.closest('[data-room-ex]');
+    if (b) { const ex = examples.find((x) => x.id === b.dataset.roomEx); if (ex) { activate(ex); renderRoomExamples(); } }
+  });
   $$('[data-cam]').forEach((b) => b.addEventListener('click', () => Room3D.preset(b.dataset.cam)));
 
-  $('#zoom').addEventListener('input', (e) => { S.zoom = +e.target.value / 100; syncPlan(); });
-  $('#zoomFit').addEventListener('click', () => { S.zoom = 1; $('#zoom').value = 100; syncPlan(); });
+  $('#zoom').addEventListener('input', (e) => { UI.zoom = +e.target.value / 100; syncAll(); });
+  $('#zoomFit').addEventListener('click', () => { UI.zoom = 1; $('#zoom').value = 100; syncAll(); });
 
   // presentation
   const stage = $('#stage');
   $('#btnPresent').addEventListener('click', async () => {
     stage.classList.add('presenting'); $('#btnExitPresent').hidden = false;
     try { if (stage.requestFullscreen) await stage.requestFullscreen(); } catch (e) { /* stays as an in-page overlay */ }
-    requestAnimationFrame(() => { syncPlan(); Room3D.resize(); });
+    requestAnimationFrame(() => { syncAll(); Room3D.resize(); });
   });
   function exitPresent() {
     stage.classList.remove('presenting'); $('#btnExitPresent').hidden = true;
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    requestAnimationFrame(() => { syncPlan(); Room3D.resize(); });
+    requestAnimationFrame(() => { syncAll(); Room3D.resize(); });
   }
   $('#btnExitPresent').addEventListener('click', exitPresent);
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && stage.classList.contains('presenting')) exitPresent(); });
@@ -708,6 +857,28 @@
     if (!silent) { selected = sc.id; commit(); }
     return sc;
   }
+  function addScreenAt(o, cx, cy) {
+    const [w, h] = dimsFor(o);
+    const sc = { id: uid(), x: cx - w / 2, y: cy - h / 2, w, h, label: '', media: null, fit: 'cover' };
+    clampScreen(sc);
+    S.screens.push(sc); selected = sc.id; commit();
+  }
+  function rotateScreen(sc) {
+    const cx = sc.x + sc.w / 2, cy = sc.y + sc.h / 2;
+    [sc.w, sc.h] = [sc.h, sc.w];
+    sc.x = cx - sc.w / 2; sc.y = cy - sc.h / 2;
+    clampScreen(sc); commit();
+  }
+  function duplicateScreen(sc) {
+    const c = Object.assign({}, sc, { id: uid() });
+    c.x = S.dir === 'rtl' ? sc.x - sc.w - 30 : sc.x + sc.w + 30; clampScreen(c);
+    S.screens.push(c); selected = c.id; commit();
+  }
+  function deleteScreen(sc) {
+    S.screens = S.screens.filter((s) => s.id !== sc.id);
+    if (selected === sc.id) selected = null;
+    commit();
+  }
 
   $('#countInput').addEventListener('change', (e) => {
     const n = clamp(parseInt(e.target.value, 10) || 1, 1, 40);
@@ -717,7 +888,7 @@
     commit();
   });
 
-  $('#snapSel').addEventListener('change', (e) => { S.snap = +e.target.value; renderSettings(); save(); });
+  $('#snapSel').addEventListener('change', (e) => { UI.snap = +e.target.value; renderSettings(); save(); });
   function wallInput(id, key, mult) {
     $(id).addEventListener('change', (e) => {
       const v = parseFloat(e.target.value);
@@ -737,41 +908,86 @@
     const R = S.wall.length / (S.wall.arc * Math.PI / 180) / 100;
     return `${S.wall.arc}° · قطر الغرفة ${(R * 2).toFixed(1)} م`;
   }
-  $$('#dirSeg button').forEach((b) => b.addEventListener('click', () => { S.dir = b.dataset.dir; P.idx = 0; refresh(); }));
-  $('#optLabels').addEventListener('change', (e) => { S.labels = e.target.checked; refresh(); });
-  $('#optEye').addEventListener('change', (e) => { S.eye = e.target.checked; refresh(); });
+  $$('#dirSeg button').forEach((b) => b.addEventListener('click', () => { S.dir = b.dataset.dir; T.idx = 0; commit(); }));
+  $('#optLabels').addEventListener('change', (e) => { UI.labels = e.target.checked; refresh(); });
+  $('#optEye').addEventListener('change', (e) => { UI.eye = e.target.checked; refresh(); });
 
   function renderSettings() {
-    $('#snapSel').value = String(S.snap);
-    $('#snapChip').textContent = S.snap > 1 ? `التقاط ${S.snap} سم` : 'بدون التقاط';
+    $('#snapSel').value = String(UI.snap);
     const setv = (id, v) => { const el = $(id); if (document.activeElement !== el) el.value = v; };
     setv('#wallLen', S.wall.length / 100);
     setv('#wallH', S.wall.height / 100);
     setv('#wallArc', S.wall.arc);
     $('#wallArcOut').textContent = arcText();
     $$('#dirSeg button').forEach((b) => b.classList.toggle('on', b.dataset.dir === S.dir));
-    $('#optLabels').checked = S.labels;
-    $('#optEye').checked = S.eye;
-    $('#optGhost').checked = S.ghost;
+    $('#optLabels').checked = UI.labels;
+    $('#optEye').checked = UI.eye;
+    $('#optGhost').checked = UI.ghost;
   }
 
-  // scenarios
-  function renderScenarios() {
-    const list = scenarios();
-    $('#scList').innerHTML = list.length ? list.map((s, i) => `<li><span>${esc(s.name)} <small>· ${s.data.screens.length} شاشة</small></span>
-      <button type="button" class="btn sm" data-sc-load="${i}">فتح</button><button type="button" class="btn sm danger" data-sc-del="${i}" aria-label="حذف">×</button></li>`).join('')
-      : '<li><small>لا توجد سيناريوهات محفوظة بعد. احفظ الترتيب الحالي لتقارن بين الخيارات.</small></li>';
+  /* ---------- examples ---------- */
+  function activate(ex) {
+    if (!ex || ex === ACT) return;
+    ACT = ex; selected = null;
+    use(ex);
+    RT.forEach((r, id) => r.card.classList.toggle('active', id === ex.id));
+    renumber();
+    renderInspector(); renderCounts(); renderSettings(); renderDisplay(); renderLibrary(); renderStatus();
+    Room3D.markDirty();
+    save();
   }
-  $('#scSave').addEventListener('click', () => {
-    const name = $('#scName').value.trim() || `سيناريو ${scenarios().length + 1}`;
-    const list = scenarios(); list.push({ name, data: persisted(), at: Date.now() });
-    setScenarios(list); $('#scName').value = ''; renderScenarios(); toast('تم حفظ «' + name + '»');
+  function cloneExample(ex, name) {
+    const c = JSON.parse(JSON.stringify(ex));
+    c.id = 'x' + uid(); c.name = name;
+    c.screens.forEach((s) => { s.id = uid(); });
+    return c;
+  }
+  function insertExample(ex, after) {
+    const i = after ? examples.indexOf(after) + 1 : examples.length;
+    examples.splice(i, 0, ex);
+    ACT = ex; selected = null;
+    use(ex);
+    commit(); renderDisplay();
+    requestAnimationFrame(() => { const r = RT.get(ex.id); if (r) r.card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); });
+  }
+  function nextName() { return `مثال ${examples.length + 1}`; }
+  function deleteExample(ex) {
+    if (examples.length < 2) { toast('لازم يبقى مثال واحد على الأقل'); return; }
+    const i = examples.indexOf(ex);
+    examples.splice(i, 1);
+    if (ACT === ex) { ACT = examples[Math.max(0, i - 1)]; selected = null; }
+    use(ACT);
+    commit(); renderDisplay();
+    toast(`حُذف «${ex.name}». تقدر ترجعه بزر التراجع`);
+  }
+  $('#examples').addEventListener('click', (e) => {
+    const card = e.target.closest('.ex'); if (!card) return;
+    const ex = examples.find((x) => x.id === card.dataset.ex); if (!ex) return;
+    if (ex !== ACT) activate(ex);
+    const b = e.target.closest('[data-ex-act]'); if (!b) return;
+    const act = b.dataset.exAct;
+    if (act === 'addh' || act === 'addv') addScreen(act === 'addh' ? 'h' : 'v');
+    else if (act === 'dup') insertExample(cloneExample(ex, ex.name + ' (نسخة)'), ex);
+    else if (act === 'room') setView('room');
+    else if (act === 'del') {
+      if (b.dataset.armed) { deleteExample(ex); return; }
+      b.dataset.armed = '1'; b.querySelector('span').textContent = 'اضغط مرة ثانية للتأكيد';
+      setTimeout(() => { delete b.dataset.armed; const sp = b.querySelector('span'); if (sp) sp.textContent = 'حذف المثال'; }, 3000);
+    }
   });
-  $('#scList').addEventListener('click', (e) => {
-    const l = e.target.closest('[data-sc-load]'), d = e.target.closest('[data-sc-del]');
-    const list = scenarios();
-    if (l) { const s = list[+l.dataset.scLoad]; if (s && applyData(s.data)) { selected = null; afterLoad(); toast('تم فتح «' + s.name + '»'); } }
-    if (d) { list.splice(+d.dataset.scDel, 1); setScenarios(list); renderScenarios(); }
+  $('#examples').addEventListener('input', (e) => {
+    if (!e.target.classList.contains('ex-name')) return;
+    const ex = examples.find((x) => x.id === e.target.closest('.ex').dataset.ex); if (!ex) return;
+    ex.name = e.target.value || 'مثال';
+    e.target.style.width = Math.min(300, Math.max(100, ex.name.length * 11 + 34)) + 'px';
+    renderCounts(); save();
+  });
+  $('#examples').addEventListener('change', (e) => { if (e.target.classList.contains('ex-name')) commit(); });
+  $('#exAdd').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-new]'); if (!b) return;
+    if (b.dataset.new === 'knpc') insertExample(newExample(nextName(), knpcPreset(2600)));
+    else if (b.dataset.new === 'copy') insertExample(cloneExample(ACT, ACT.name + ' (نسخة)'), ACT);
+    else insertExample(newExample(nextName(), []));
   });
 
   function download(name, text, type) {
@@ -789,27 +1005,31 @@
     }
   }
   $('#btnExport').addEventListener('click', () => download('knpc-screens-plan.json', JSON.stringify(persisted(), null, 2), 'application/json'));
-  $('#btnCopyJson').addEventListener('click', () => copyText(JSON.stringify(persisted()), 'تم نسخ المخطط'));
+  $('#btnCopyJson').addEventListener('click', () => copyText(JSON.stringify(persisted()), 'تم نسخ كل الأمثلة'));
   $('#btnImport').addEventListener('click', () => $('#importInput').click());
   $('#importInput').addEventListener('change', async (e) => {
     const f = e.target.files[0]; e.target.value = '';
     if (!f) return;
-    try { if (applyData(JSON.parse(await f.text()))) { selected = null; afterLoad(); toast('تم فتح المخطط'); } else toast('الملف لا يحتوي على مخطط شاشات صالح'); }
-    catch (er) { toast('تعذّرت قراءة الملف. تأكد أنه ملف JSON صادر من هذه الأداة.'); }
+    try {
+      const list = examplesFrom(JSON.parse(await f.text()));
+      if (!list.length) { toast('الملف لا يحتوي على مخطط شاشات صالح'); return; }
+      examples.push(...list); ACT = list[0]; selected = null; use(ACT);
+      commit(); renderDisplay();
+      toast(`أُضيف ${list.length === 1 ? 'مثال واحد' : list.length + ' أمثلة'} من الملف`);
+    } catch (er) { toast('تعذّرت قراءة الملف. تأكد أنه ملف JSON صادر من هذه الأداة.'); }
   });
   $('#btnReset').addEventListener('click', () => { $('#resetConfirm').hidden = !$('#resetConfirm').hidden; });
   $('#btnResetYes').addEventListener('click', () => {
-    S.wall = { length: 2600, height: 420, arc: 220 }; S.screens = knpcPreset(2600); S.mode = 'independent'; S.dir = 'rtl';
-    S.g = Object.assign({}, DEFAULT_G); selected = null; $('#resetConfirm').hidden = true; afterLoad(); toast('تمت العودة للمخطط الأصلي');
+    examples = [newExample('المخطط الحالي', knpcPreset(2600))]; ACT = examples[0]; selected = null; use(ACT);
+    $('#resetConfirm').hidden = true; commit(); renderDisplay(); toast('تمت العودة للمخطط الأصلي');
   });
-  function afterLoad() { P.idx = 0; P.prev = -1; commit(); renderDisplay(); renderSettings(); }
 
   /* =====================================================================
      UI: display (playback) card
      ===================================================================== */
   $('#modes').innerHTML = MODES.map((m) => `<label class="mode"><input type="radio" name="mode" value="${m.key}">
     <svg viewBox="0 0 54 30" fill="currentColor" style="color:var(--gold)">${m.icon}</svg><b>${m.name}</b><small>${m.desc}</small></label>`).join('');
-  $$('#modes input').forEach((r) => r.addEventListener('change', () => { S.mode = r.value; P.idx = 0; P.prev = -1; P.tt = 0; renderDisplay(); renderInspector(); save(); }));
+  $$('#modes input').forEach((r) => r.addEventListener('change', () => { S.mode = r.value; Object.assign(T, { idx: 0, prev: -1, tt: 0 }); renderDisplay(); renderInspector(); renderHeader(); save(); }));
 
   function mediaOptions(selectedId, emptyLabel) {
     const groups = { anim: [], video: [], image: [], text: [] };
@@ -838,7 +1058,7 @@
     $('#gWidth').value = S.g.width; $('#gWidthOut').textContent = S.g.width > 0 ? S.g.width + ' سم' : 'تلقائي (16:9)';
     $('#gWhole').checked = S.g.whole; $('#gRestart').checked = S.g.restart; $('#gFade').checked = S.g.fade;
     $('#gDwell').disabled = S.g.whole;
-    $('#optGhost').checked = S.ghost;
+    $('#optGhost').checked = UI.ghost;
     renderSpanInfo();
   }
   function renderSpanInfo() {
@@ -854,7 +1074,7 @@
       دقة الإنتاج الكاملة <b>${full}</b> بكسل؛ مقاس عملي للمونتاج <b>${fmt(pw)}×${fmt(ph)}</b>.`;
   }
   $('#gMedia').addEventListener('change', (e) => { S.g.media = e.target.value || null; save(); renderLibrary(); });
-  $$('#travelSeg button').forEach((b) => b.addEventListener('click', () => { S.g.style = b.dataset.style; P.idx = 0; renderDisplay(); save(); }));
+  $$('#travelSeg button').forEach((b) => b.addEventListener('click', () => { S.g.style = b.dataset.style; T.idx = 0; renderDisplay(); save(); }));
   $$('#othersSeg button').forEach((b) => b.addEventListener('click', () => { S.g.others = b.dataset.o; renderDisplay(); save(); }));
   $$('#spanSeg button').forEach((b) => b.addEventListener('click', () => { S.g.area = b.dataset.a; renderDisplay(); save(); }));
   $$('#spanFitSeg button').forEach((b) => b.addEventListener('click', () => { S.g.spanFit = b.dataset.f; renderDisplay(); save(); }));
@@ -864,7 +1084,7 @@
   [['#gWhole', 'whole'], ['#gRestart', 'restart'], ['#gFade', 'fade']].forEach(([id, k]) => {
     $(id).addEventListener('change', (e) => { S.g[k] = e.target.checked; renderDisplay(); save(); });
   });
-  $('#optGhost').addEventListener('change', (e) => { S.ghost = e.target.checked; save(); });
+  $('#optGhost').addEventListener('change', (e) => { UI.ghost = e.target.checked; save(); });
 
   /* =====================================================================
      UI: library card
@@ -1015,12 +1235,8 @@
     });
     $('#iMedia').addEventListener('change', (e) => assign(sc.id, e.target.value || null));
     $$('#iFit button').forEach((b) => b.addEventListener('click', () => { sc.fit = b.dataset.f; commit(); }));
-    $('#iDup').addEventListener('click', () => {
-      const c = Object.assign({}, sc, { id: uid() });
-      c.x = S.dir === 'rtl' ? sc.x - sc.w - 30 : sc.x + sc.w + 30; clampScreen(c);
-      S.screens.push(c); selected = c.id; commit();
-    });
-    $('#iDel').addEventListener('click', () => { S.screens = S.screens.filter((s) => s.id !== sc.id); selected = null; commit(); });
+    $('#iDup').addEventListener('click', () => duplicateScreen(sc));
+    $('#iDel').addEventListener('click', () => deleteScreen(sc));
   }
   $('#inspector').addEventListener('click', (e) => { const b = e.target.closest('[data-pick]'); if (b) select(b.dataset.pick); });
 
@@ -1077,9 +1293,10 @@
     const sc = get(selected);
     if (e.key === 'Escape') { if (stage.classList.contains('presenting')) exitPresent(); else select(null); return; }
     if (!sc) return;
-    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); S.screens = S.screens.filter((s) => s !== sc); selected = null; commit(); return; }
-    if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); $('#iDup') && $('#iDup').click(); return; }
-    const step = (e.shiftKey ? 10 : 1) * Math.max(1, S.snap);
+    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteScreen(sc); return; }
+    if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateScreen(sc); return; }
+    if (!mod && (e.key === 'r' || e.key === 'R' || e.key === 'ق')) { e.preventDefault(); rotateScreen(sc); return; }
+    const step = (e.shiftKey ? 10 : 1) * Math.max(1, UI.snap);
     const mv = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }[e.key];
     if (mv) { e.preventDefault(); sc.x += mv[0]; sc.y += mv[1]; clampScreen(sc); commit(); }
   });
@@ -1088,8 +1305,7 @@
      refresh + boot
      ===================================================================== */
   function refresh() {
-    renumber();
-    syncPlan();
+    syncAll();
     renderInspector();
     renderCounts();
     renderSettings();
@@ -1100,9 +1316,9 @@
     save();
   }
 
-  new ResizeObserver(() => { if (S.view === 'plan') syncPlan(); Room3D.resize(); }).observe(stage);
+  new ResizeObserver(() => { if (UI.view === 'plan' && ACT) syncAll(); Room3D.resize(); }).observe(stage);
 
-  Media.on(() => { renderLibrary(); renderDisplay(); if (selected) { const s = $('#iMedia'); if (s) s.innerHTML = mediaOptions(get(selected) && get(selected).media); } S.screens.forEach(layoutScreen); });
+  Media.on(() => { if (!ACT) return; renderLibrary(); renderDisplay(); if (selected) { const s = $('#iMedia'); if (s) s.innerHTML = mediaOptions(get(selected) && get(selected).media); } if (ACT) syncAll(); });
 
   // inside a hosted preview, file downloads are blocked: keep only the copy buttons there
   if (window.__NO_DOWNLOADS__) { $('#btnExport').hidden = true; $('#sheetCsv').hidden = true; }
@@ -1113,17 +1329,17 @@
       : Promise.resolve();
     await Promise.race([fonts, new Promise((r) => setTimeout(r, 1800))]);
     Media.initDemos();
-    if (!load()) S.screens = knpcPreset(S.wall.length);
+    if (!load()) { examples = [newExample('المخطط الحالي', knpcPreset(2600))]; ACT = examples[0]; }
+    use(ACT);
     Room3D.init($('#roomCanvas'), {
-      state: () => S,
-      canvasFor: (id) => { const v = views.get(id); return v ? v.canvas : null; },
+      state: () => ACT,
+      canvasFor: (id) => { const r = RT.get(ACT.id), v = r && r.views.get(id); return v ? v.canvas : null; },
       selectedId: () => selected,
       onPick: (id) => select(id),
     });
     hist.stack = [snap()]; hist.i = 0;
     refresh();
     renderDisplay();
-    renderScenarios();
     if (location.hash === '#room') setView('room');
     requestAnimationFrame(frame);
     Media.restore().then(() => refresh());

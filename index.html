@@ -52,20 +52,18 @@
 
     <div class="plan" id="plan">
       <div class="plan-scroll" id="planScroll">
-        <div class="plan-inner" id="planInner">
-          <div class="wall" id="wall">
-            <canvas class="ghost" id="ghost"></canvas>
-            <div class="eye-line" id="eyeLine"><span>مستوى النظر</span></div>
-            <div class="ruler" id="ruler"></div>
-            <div class="vruler" id="vruler"></div>
-          </div>
-          <div class="dir-arrow" id="dirArrow"><span>اتجاه المشاهدة</span></div>
+        <div class="examples" id="examples"></div>
+        <div class="ex-add" id="exAdd">
+          <button type="button" class="btn" data-new="knpc">+ مثال جديد من المخطط الحالي</button>
+          <button type="button" class="btn" data-new="copy">+ نسخة من المثال المحدد</button>
+          <button type="button" class="btn" data-new="empty">+ جدار فارغ</button>
         </div>
       </div>
     </div>
 
     <div class="room" id="room" hidden>
       <div class="room-canvas" id="roomCanvas"></div>
+      <div class="room-ex" id="roomEx"></div>
       <div class="room-cams">
         <button type="button" class="btn sm" data-cam="visitor">الزائر في المنتصف</button>
         <button type="button" class="btn sm" data-cam="entrance">من المدخل</button>
@@ -81,7 +79,7 @@
 
     <!-- 1. layout -->
     <div class="card" id="cardLayout">
-      <header class="card-h"><h2>ترتيب الشاشات</h2><span class="chip" id="snapChip">التقاط 10 سم</span></header>
+      <header class="card-h"><h2>ترتيب الشاشات</h2><span class="chip" data-exname></span></header>
       <h3>ترتيبات جاهزة</h3>
       <div class="arr-grid" id="arrGrid"></div>
       <h3>ضبط سريع</h3>
@@ -120,27 +118,23 @@
       <label class="check"><input type="checkbox" id="optLabels"> إظهار الوصف تحت كل شاشة</label>
       <label class="check"><input type="checkbox" id="optEye"> إظهار مستوى النظر (160 سم)</label>
 
-      <h3>السيناريوهات المحفوظة</h3>
-      <div class="inline">
-        <input type="text" id="scName" placeholder="اسم السيناريو، مثلاً: صفّان + فيلم ممتد">
-        <button type="button" class="btn sm" id="scSave">حفظ</button>
-      </div>
-      <ul class="sc-list" id="scList"></ul>
+      <h3>حفظ ومشاركة</h3>
+      <p class="hint">كل الأمثلة تُحفظ تلقائياً في هذا المتصفح. لمشاركتها مع الفريق نزّل الملف أو انسخه، ثم افتحه من جهاز آخر.</p>
       <div class="row-btns" style="margin-top:10px">
         <button type="button" class="btn sm" id="btnExport">تنزيل الملف</button>
         <button type="button" class="btn sm" id="btnCopyJson">نسخ المخطط</button>
-        <button type="button" class="btn sm" id="btnImport">فتح ملف مخطط</button>
+        <button type="button" class="btn sm" id="btnImport">إضافة أمثلة من ملف</button>
         <button type="button" class="btn sm danger" id="btnReset">البدء من جديد</button>
       </div>
       <p class="hint" id="resetConfirm" hidden>
-        سيُستبدل المخطط الحالي بالمخطط الأصلي. المحتوى المرفوع يبقى في المكتبة.
+        ستُحذف كل الأمثلة ويبقى المخطط الأصلي فقط. المحتوى المرفوع يبقى في المكتبة.
         <button type="button" class="btn sm danger" id="btnResetYes">نعم، ابدأ من جديد</button>
       </p>
     </div>
 
     <!-- 2. playback -->
     <div class="card" id="cardDisplay">
-      <header class="card-h"><h2>طريقة العرض</h2></header>
+      <header class="card-h"><h2>طريقة العرض</h2><span class="chip" data-exname></span></header>
       <div class="modes" id="modes" role="radiogroup" aria-label="طريقة العرض"></div>
       <div class="opt-box" id="gBox">
         <div class="f">

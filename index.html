@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>مخطط شاشات متحف KNPC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Reem+Kufi:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app" id="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">KNPC</span>
+      <div>
+        <h1>مخطط شاشات المتحف</h1>
+        <p id="countLine">—</p>
+      </div>
+    </div>
+    <div class="seg" id="viewSeg" role="tablist" aria-label="طريقة المشاهدة">
+      <button type="button" data-view="plan" class="on">مخطط الجدار</button>
+      <button type="button" data-view="room">الغرفة ثلاثية الأبعاد</button>
+    </div>
+    <div class="cluster">
+      <button type="button" class="btn primary" id="btnPlay"></button>
+      <button type="button" class="btn icon" id="btnRestart" title="إعادة من البداية" aria-label="إعادة من البداية"></button>
+      <button type="button" class="btn icon" id="btnSound" title="تشغيل الصوت" aria-label="الصوت"></button>
+    </div>
+    <div class="cluster">
+      <button type="button" class="btn icon" id="btnUndo" title="تراجع (Ctrl+Z)" aria-label="تراجع"></button>
+      <button type="button" class="btn icon" id="btnRedo" title="إعادة (Ctrl+Y)" aria-label="إعادة"></button>
+      <button type="button" class="btn" id="btnSheet">قائمة الإنتاج</button>
+      <button type="button" class="btn" id="btnDock">إخفاء اللوحات</button>
+      <button type="button" class="btn" id="btnPresent">عرض كامل</button>
+    </div>
+  </header>
+
+  <main class="stage" id="stage">
+    <div class="stage-bar">
+      <span class="mode-pill" id="modePill"><i></i><b id="modeName"></b></span>
+      <span class="mode-text" id="modeText"></span>
+      <div class="zoom" id="zoomBox">
+        <label for="zoom">تكبير</label>
+        <input type="range" id="zoom" min="50" max="400" step="10" value="100">
+        <output id="zoomOut">100%</output>
+        <button type="button" class="btn sm" id="zoomFit">ملاءمة</button>
+      </div>
+    </div>
+
+    <div class="plan" id="plan">
+      <div class="plan-scroll" id="planScroll">
+        <div class="plan-inner" id="planInner">
+          <div class="wall" id="wall">
+            <canvas class="ghost" id="ghost"></canvas>
+            <div class="eye-line" id="eyeLine"><span>مستوى النظر</span></div>
+            <div class="ruler" id="ruler"></div>
+            <div class="vruler" id="vruler"></div>
+          </div>
+          <div class="dir-arrow" id="dirArrow"><span>اتجاه المشاهدة</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="room" id="room" hidden>
+      <div class="room-canvas" id="roomCanvas"></div>
+      <div class="room-cams">
+        <button type="button" class="btn sm" data-cam="visitor">الزائر في المنتصف</button>
+        <button type="button" class="btn sm" data-cam="entrance">من المدخل</button>
+        <button type="button" class="btn sm" data-cam="top">منظر علوي</button>
+      </div>
+      <p class="room-hint">اسحب للالتفات · عجلة الفأرة للابتعاد والاقتراب · اضغط على شاشة لتحديدها</p>
+    </div>
+
+    <button type="button" class="btn sm exit-present" id="btnExitPresent" hidden>خروج من العرض الكامل</button>
+  </main>
+
+  <section class="dock" id="dock">
+
+    <!-- 1. layout -->
+    <div class="card" id="cardLayout">
+      <header class="card-h"><h2>ترتيب الشاشات</h2><span class="chip" id="snapChip">التقاط 10 سم</span></header>
+      <h3>ترتيبات جاهزة</h3>
+      <div class="arr-grid" id="arrGrid"></div>
+      <h3>ضبط سريع</h3>
+      <div class="row-btns">
+        <button type="button" class="btn sm" data-arr="distribute">توزيع بمسافات متساوية</button>
+        <button type="button" class="btn sm" data-arr="align">على خط واحد</button>
+        <button type="button" class="btn sm" data-arr="allh">الكل أفقي</button>
+        <button type="button" class="btn sm" data-arr="allv">الكل عمودي</button>
+      </div>
+      <h3>إضافة</h3>
+      <div class="row-btns">
+        <button type="button" class="btn sm" data-add="h">+ شاشة أفقية</button>
+        <button type="button" class="btn sm" data-add="v">+ شاشة عمودية</button>
+        <button type="button" class="btn sm" data-add="s">+ شاشة مربعة</button>
+      </div>
+      <div class="f2" style="margin-top:10px">
+        <label>عدد الشاشات<input type="number" id="countInput" min="1" max="40"></label>
+        <label>شبكة الالتقاط
+          <select id="snapSel"><option value="1">بدون</option><option value="5">5 سم</option><option value="10">10 سم</option><option value="25">25 سم</option><option value="50">50 سم</option></select>
+        </label>
+      </div>
+
+      <h3>الجدار</h3>
+      <div class="f2">
+        <label>طول الجدار (م)<input type="number" id="wallLen" min="4" max="80" step="0.5"></label>
+        <label>ارتفاع الجدار (م)<input type="number" id="wallH" min="2" max="12" step="0.1"></label>
+      </div>
+      <div class="range-row">
+        <label for="wallArc">التفاف الجدار حول الغرفة</label><output id="wallArcOut"></output>
+        <input type="range" id="wallArc" min="60" max="330" step="5">
+      </div>
+      <div class="f">
+        <span>اتجاه القراءة والترقيم</span>
+        <div class="seg sm full" id="dirSeg"><button type="button" data-dir="rtl">من اليمين لليسار</button><button type="button" data-dir="ltr">من اليسار لليمين</button></div>
+      </div>
+      <label class="check"><input type="checkbox" id="optLabels"> إظهار الوصف تحت كل شاشة</label>
+      <label class="check"><input type="checkbox" id="optEye"> إظهار مستوى النظر (160 سم)</label>
+
+      <h3>السيناريوهات المحفوظة</h3>
+      <div class="inline">
+        <input type="text" id="scName" placeholder="اسم السيناريو، مثلاً: صفّان + فيلم ممتد">
+        <button type="button" class="btn sm" id="scSave">حفظ</button>
+      </div>
+      <ul class="sc-list" id="scList"></ul>
+      <div class="row-btns" style="margin-top:10px">
+        <button type="button" class="btn sm" id="btnExport">تنزيل الملف</button>
+        <button type="button" class="btn sm" id="btnCopyJson">نسخ المخطط</button>
+        <button type="button" class="btn sm" id="btnImport">فتح ملف مخطط</button>
+        <button type="button" class="btn sm danger" id="btnReset">البدء من جديد</button>
+      </div>
+      <p class="hint" id="resetConfirm" hidden>
+        سيُستبدل المخطط الحالي بالمخطط الأصلي. المحتوى المرفوع يبقى في المكتبة.
+        <button type="button" class="btn sm danger" id="btnResetYes">نعم، ابدأ من جديد</button>
+      </p>
+    </div>
+
+    <!-- 2. playback -->
+    <div class="card" id="cardDisplay">
+      <header class="card-h"><h2>طريقة العرض</h2></header>
+      <div class="modes" id="modes" role="radiogroup" aria-label="طريقة العرض"></div>
+      <div class="opt-box" id="gBox">
+        <div class="f">
+          <label for="gMedia">المحتوى المشترك</label>
+          <select id="gMedia"></select>
+        </div>
+        <div data-for="travel">
+          <div class="f">
+            <span>طريقة الانتقال</span>
+            <div class="seg sm full" id="travelSeg"><button type="button" data-style="jump">من شاشة لشاشة</button><button type="button" data-style="glide">انسياب عبر الجدار</button></div>
+          </div>
+          <div data-style-for="jump">
+            <div class="range-row"><label for="gDwell">مدة البقاء على كل شاشة</label><output id="gDwellOut"></output><input type="range" id="gDwell" min="1" max="30" step="0.5"></div>
+            <label class="check"><input type="checkbox" id="gWhole"> البقاء طوال مدة الفيديو</label>
+            <label class="check"><input type="checkbox" id="gRestart"> يبدأ الفيديو من أوله على كل شاشة</label>
+            <label class="check"><input type="checkbox" id="gFade"> انتقال ناعم</label>
+          </div>
+          <div data-style-for="glide">
+            <div class="range-row"><label for="gSpeed">سرعة الانسياب</label><output id="gSpeedOut"></output><input type="range" id="gSpeed" min="20" max="600" step="10"></div>
+            <div class="range-row"><label for="gWidth">عرض النافذة المتحركة</label><output id="gWidthOut"></output><input type="range" id="gWidth" min="0" max="1500" step="10"></div>
+          </div>
+          <div class="f">
+            <span>الشاشات الأخرى أثناء الانتقال</span>
+            <div class="seg sm full" id="othersSeg"><button type="button" data-o="dark">مطفأة</button><button type="button" data-o="own">محتواها الخاص خافتاً</button></div>
+          </div>
+        </div>
+        <div data-for="span">
+          <div class="f">
+            <span>مساحة الامتداد</span>
+            <div class="seg sm full" id="spanSeg"><button type="button" data-a="screens">حدود الشاشات</button><button type="button" data-a="wall">الجدار كاملاً</button></div>
+          </div>
+          <div class="f">
+            <span>ملاءمة المحتوى للمساحة</span>
+            <div class="seg sm full" id="spanFitSeg"><button type="button" data-f="cover">ملء (قص الأطراف)</button><button type="button" data-f="contain">إظهار كاملاً</button></div>
+          </div>
+          <p class="meta" id="spanInfo"></p>
+        </div>
+        <label class="check" data-for="span travel"><input type="checkbox" id="optGhost"> إظهار الصورة الكاملة خلف الشاشات في المخطط</label>
+      </div>
+    </div>
+
+    <!-- 3. library -->
+    <div class="card" id="cardMedia">
+      <header class="card-h"><h2>مكتبة المحتوى</h2><span class="chip" id="libCount"></span></header>
+      <div class="drop" id="dropZone">
+        <span>اسحب صوراً أو فيديوهات إلى هنا</span>
+        <button type="button" class="btn sm" id="btnUpload">اختيار ملفات</button>
+        <small>الملفات تبقى في متصفحك فقط ولا تُرفع لأي خادم</small>
+      </div>
+      <details class="textcard" id="textCard">
+        <summary>+ بطاقة نص (عنوان أو اقتباس)</summary>
+        <div class="f"><label for="tTitle">النص الرئيسي</label><textarea id="tTitle" rows="2">تاريخ التكرير في الكويت</textarea></div>
+        <div class="f"><label for="tSub">سطر فرعي</label><input type="text" id="tSub" value="من مصفاة ميناء الأحمدي إلى اليوم"></div>
+        <div class="f2">
+          <label>الخلفية<input type="color" id="tBg" value="#0f1622"></label>
+          <label>لون النص<input type="color" id="tFg" value="#f2d394"></label>
+        </div>
+        <div class="f"><span>الاتجاه</span><div class="seg sm full" id="tOrient"><button type="button" data-o="h" class="on">أفقية</button><button type="button" data-o="v">عمودية</button></div></div>
+        <button type="button" class="btn sm primary" id="tAdd">إضافة البطاقة</button>
+      </details>
+      <p class="hint">اسحب أي عنصر وأفلته على شاشة في المخطط، أو حدّد شاشة ثم اضغط على العنصر.</p>
+      <div class="lib" id="lib"></div>
+    </div>
+
+    <!-- 4. inspector -->
+    <div class="card" id="inspector"></div>
+  </section>
+</div>
+
+<dialog id="sheetDlg" aria-labelledby="sheetTitle">
+  <div class="dlg-h">
+    <h2 id="sheetTitle">قائمة إنتاج المحتوى</h2>
+    <button type="button" class="btn sm" id="sheetCopy">نسخ الجدول</button>
+    <button type="button" class="btn sm" id="sheetCsv">تنزيل CSV</button>
+    <button type="button" class="btn sm" id="sheetClose">إغلاق</button>
+  </div>
+  <div class="dlg-b" id="sheetBody"></div>
+</dialog>
+
+<input type="file" id="fileInput" multiple accept="image/*,video/*" hidden>
+<input type="file" id="importInput" accept="application/json,.json" hidden>
+
+<script src="js/vendor/three.min.js"></script>
+<script src="js/media.js"></script>
+<script src="js/room3d.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

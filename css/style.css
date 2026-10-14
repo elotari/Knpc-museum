@@ -72,6 +72,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .brand p { margin: 2px 0 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
+.cloud-chip {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 3px;
+  font-size: 11.5px; color: var(--muted);
+}
+.cloud-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.cloud-chip[data-state="ok"]::before { background: var(--live); }
+.cloud-chip[data-state="saving"]::before { background: var(--gold); }
+.cloud-chip[data-state="err"] { color: var(--danger); }
+.cloud-chip[data-state="err"]::before { background: var(--danger); }
 .cluster { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 /* ---------- buttons ---------- */

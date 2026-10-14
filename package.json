@@ -1,0 +1,10 @@
+{
+  "name": "knpc-museum-screen-planner",
+  "private": true,
+  "type": "module",
+  "description": "KNPC museum screen-wall planner (static site + small Vercel API)",
+  "dependencies": {
+    "@vercel/blob": "2.8.0",
+    "@vercel/functions": "3.9.9"
+  }
+}

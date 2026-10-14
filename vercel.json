@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/media/:store/:path*", "destination": "https://:store.public.blob.vercel-storage.com/:path*" }
+  ]
+}

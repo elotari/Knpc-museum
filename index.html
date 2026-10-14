@@ -18,6 +18,7 @@
       <div>
         <h1>مخطط شاشات المتحف</h1>
         <p id="countLine">—</p>
+        <span class="cloud-chip" id="cloudChip" hidden></span>
       </div>
     </div>
     <div class="seg" id="viewSeg" role="tablist" aria-label="طريقة المشاهدة">
@@ -119,7 +120,7 @@
       <label class="check"><input type="checkbox" id="optEye"> إظهار مستوى النظر (160 سم)</label>
 
       <h3>حفظ ومشاركة</h3>
-      <p class="hint">كل الأمثلة تُحفظ تلقائياً في هذا المتصفح. لمشاركتها مع الفريق نزّل الملف أو انسخه، ثم افتحه من جهاز آخر.</p>
+      <p class="hint" id="shareHint">كل الأمثلة تُحفظ تلقائياً في هذا المتصفح. لمشاركتها مع الفريق نزّل الملف أو انسخه، ثم افتحه من جهاز آخر.</p>
       <div class="row-btns" style="margin-top:10px">
         <button type="button" class="btn sm" id="btnExport">تنزيل الملف</button>
         <button type="button" class="btn sm" id="btnCopyJson">نسخ المخطط</button>
@@ -127,7 +128,7 @@
         <button type="button" class="btn sm danger" id="btnReset">البدء من جديد</button>
       </div>
       <p class="hint" id="resetConfirm" hidden>
-        ستُحذف كل الأمثلة ويبقى المخطط الأصلي فقط. المحتوى المرفوع يبقى في المكتبة.
+        <span id="resetText"></span>
         <button type="button" class="btn sm danger" id="btnResetYes">نعم، ابدأ من جديد</button>
       </p>
     </div>

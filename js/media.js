@@ -398,18 +398,24 @@
 
   const uid = () => 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-  async function addFile(blob, name, id, persist) {
-    const type = blob.type || '';
-    const isVideo = type.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogv)$/i.test(name || '');
-    const isImage = type.startsWith('image/') || /\.(png|jpe?g|webp|gif|avif|svg)$/i.test(name || '');
-    if (!isVideo && !isImage) return null;
-    id = id || uid();
-    const url = URL.createObjectURL(blob);
+  const kindOf = (type, name) => {
+    if ((type || '').startsWith('video/') || /\.(mp4|webm|mov|m4v|ogv)$/i.test(name || '')) return 'video';
+    if ((type || '').startsWith('image/') || /\.(png|jpe?g|webp|gif|avif|svg)$/i.test(name || '')) return 'image';
+    return null;
+  };
+
+  // builds a library item around a URL (a local blob: URL or the shared cloud copy)
+  // `alt` is a second address to try if the first fails (the file straight from storage)
+  function fallbackTo(el, alt) {
+    if (!alt) return;
+    el.addEventListener('error', () => { if (el.dataset.alt) return; el.dataset.alt = '1'; el.crossOrigin = 'anonymous'; el.src = alt; });
+  }
+  async function makeItem(id, name, kind, url, alt) {
     let it;
-    if (isVideo) {
+    if (kind === 'video') {
       const v = document.createElement('video');
-      v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
-      it = { id, name, kind: 'video', src: v, url, user: true, thumb: '',
+      v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'auto'; fallbackTo(v, alt); v.src = url;
+      it = { id, name, kind, src: v, url, user: true, thumb: '',
         w: () => v.videoWidth, h: () => v.videoHeight, ready: () => v.readyState >= 2 };
       v.addEventListener('loadeddata', () => {
         it.thumb = makeThumb(v, v.videoWidth, v.videoHeight); emit();
@@ -421,17 +427,41 @@
       }, { once: true });
       v.load();
     } else {
-      const img = new Image(); img.src = url;
-      try { await img.decode(); } catch (e) { /* broken image */ }
+      const img = new Image(); fallbackTo(img, alt); img.src = url;
+      try { await img.decode(); } catch (e) { if (alt) { try { await new Promise((r) => { img.onload = r; img.onerror = r; setTimeout(r, 8000); }); } catch (er) { /* ignore */ } } }
       it = { id, name, kind: 'image', src: img, url, user: true,
         w: () => img.naturalWidth, h: () => img.naturalHeight, ready: () => img.complete && img.naturalWidth > 0 };
       it.thumb = makeThumb(img, img.naturalWidth, img.naturalHeight);
     }
+    return it;
+  }
+
+  async function addFile(blob, name, id, persist) {
+    const type = blob.type || '';
+    const kind = kindOf(type, name);
+    if (!kind) return null;
+    id = id || uid();
+    const it = await makeItem(id, name, kind, URL.createObjectURL(blob));
+    it.file = blob;
     items.set(id, it);
-    if (persist !== false) dbDo('readwrite', (st) => st.put({ id, name, kind: it.kind, type, blob }));
+    if (persist !== false) dbDo('readwrite', (st) => st.put({ id, name, kind, type, blob }));
     emit();
     return it;
   }
+
+  // a file that lives in the team's shared storage; `src` is the address to load it from
+  async function addRemote(rec, src) {
+    const have = items.get(rec.id);
+    if (have) { have.remote = true; return have; }
+    let it;
+    if (rec.kind === 'text') it = addText(rec.spec || {}, rec.id, false);
+    else { it = await makeItem(rec.id, rec.name, rec.kind, src, rec.url !== src ? rec.url : null); items.set(rec.id, it); }
+    it.remote = true;
+    emit();
+    return it;
+  }
+  // after a local file has been copied to shared storage, stop keeping the browser copy
+  function forgetLocal(id) { dbDo('readwrite', (st) => st.delete(id)); }
 
   function addText(spec, id, persist) {
     id = id || uid();
@@ -451,7 +481,7 @@
     const it = items.get(id);
     if (!it || it.demo) return;
     if (it.kind === 'video') { try { it.src.pause(); it.src.removeAttribute('src'); it.src.load(); } catch (e) { /* ignore */ } }
-    if (it.url) URL.revokeObjectURL(it.url);
+    if (it.url && it.url.startsWith('blob:')) URL.revokeObjectURL(it.url);
     items.delete(id);
     dbDo('readwrite', (st) => st.delete(id));
     emit();
@@ -474,7 +504,7 @@
     get: (id) => (id ? items.get(id) : null),
     list: () => [...items.values()],
     on: (f) => listeners.push(f),
-    initDemos, addFile, addText, remove, restore,
+    initDemos, addFile, addText, addRemote, forgetLocal, remove, restore, kindOf, uid,
     kindLabel: (k) => KIND_LABEL[k] || k,
     isMoving: (it) => !!it && (it.kind === 'video' || it.kind === 'anim'),
   };

@@ -141,6 +141,7 @@
   function save() {
     clearTimeout(saveT);
     saveT = setTimeout(() => { try { localStorage.setItem(LS_V2, JSON.stringify(persisted())); } catch (e) { /* storage off */ } }, 300);
+    cloudSchedule(); // shared copy for the team, when the site runs on Vercel
   }
   // accepts one example (or a layout saved by the first version of the tool)
   function normalizeExample(d, name, keepIds) {
@@ -644,6 +645,145 @@
     requestAnimationFrame(frame);
   }
 
+
+  /* =====================================================================
+     shared storage on Vercel (Upstash Redis for the plan, Vercel Blob for files).
+     When the API isn't there (opened as a file, GitHub Pages, the hosted preview)
+     nothing changes: everything stays in this browser.
+     ===================================================================== */
+  const Cloud = { on: false, rev: 0, dirty: false, busy: false, applying: false };
+  function cloudStatus(state, text) {
+    const el = $('#cloudChip'); if (!el) return;
+    el.hidden = false; el.dataset.state = state; el.textContent = text;
+  }
+  async function api(path, opts) {
+    const r = await fetch(path, Object.assign({ cache: 'no-store', credentials: 'same-origin' }, opts));
+    if (r.status === 401) { location.reload(); throw Object.assign(new Error('auth'), { status: 401 }); }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) throw Object.assign(new Error(j.error || String(r.status)), { status: r.status });
+    return j;
+  }
+  const jsonBody = (method, data) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  // shared files load through /media/<store>/<path> on this site (a rewrite to Vercel Blob) so canvases and 3D textures can read them
+  function mediaSrc(url) {
+    const m = /^https:\/\/([a-z0-9]+)\.public\.blob\.vercel-storage\.com\/(.+)$/i.exec(url || '');
+    return m ? `/media/${m[1]}/${m[2]}` : url;
+  }
+
+  async function cloudInit() {
+    if (location.protocol === 'file:' || window.__NO_DOWNLOADS__ || /\.github\.io$/.test(location.hostname)) return;
+    let st;
+    try { st = await api('/api/state'); }
+    catch (e) {
+      if (e.status === 503) cloudStatus('off', 'قاعدة البيانات غير مربوطة بعد · الحفظ على هذا الجهاز فقط');
+      return; // no API here (GitHub Pages, local file): stay local, quietly
+    }
+    Cloud.on = true; Cloud.rev = st.rev || 0;
+    $('#shareHint').textContent = 'كل الأمثلة والملفات محفوظة أونلاين، وأي حدا من الفريق بيفتح الرابط بيشوف آخر نسخة. تقدر كمان تنزّل نسخة احتياطية.';
+    if (st.data && Array.isArray(st.data.examples) && st.data.examples.length) applyRemote(st.data);
+    else { Cloud.dirty = true; await cloudPush(); } // first visit: seed the empty team storage with this browser's examples
+    cloudStatus('ok', 'محفوظ أونلاين للفريق');
+    await cloudMedia();
+    migrateLocalMedia();
+    setInterval(cloudPoll, 6000);
+    setInterval(cloudMedia, 20000);
+  }
+
+  function applyRemote(data) {
+    const list = data.examples.map((x) => normalizeExample(x, null, true)).filter(Boolean);
+    if (!list.length) return;
+    const keep = ACT && ACT.id;
+    Cloud.applying = true;
+    examples = list;
+    ACT = examples.find((x) => x.id === keep) || examples[0];
+    use(ACT);
+    if (selected && !get(selected)) selected = null;
+    hist.stack = hist.stack.slice(0, hist.i + 1); hist.stack.push(snap()); hist.i = hist.stack.length - 1;
+    refresh(); renderDisplay();
+    Cloud.applying = false;
+  }
+
+  let pushT = 0;
+  function cloudSchedule() {
+    if (!Cloud.on || Cloud.applying) return;
+    Cloud.dirty = true;
+    cloudStatus('saving', 'جارٍ الحفظ…');
+    clearTimeout(pushT); pushT = setTimeout(cloudPush, 900);
+  }
+  async function cloudPush() {
+    if (!Cloud.dirty) return;
+    if (Cloud.busy) { clearTimeout(pushT); pushT = setTimeout(cloudPush, 500); return; }
+    Cloud.busy = true; Cloud.dirty = false;
+    try {
+      const r = await api('/api/state', jsonBody('PUT', { data: { v: 2, examples }, baseRev: Cloud.rev }));
+      Cloud.rev = r.rev;
+      cloudStatus('ok', 'محفوظ أونلاين للفريق');
+    } catch (e) {
+      Cloud.dirty = true;
+      cloudStatus('err', e.status === 413 ? 'المخطط أكبر من المسموح للحفظ أونلاين' : 'تعذّر الحفظ أونلاين · رح نحاول مرة ثانية');
+      clearTimeout(pushT); pushT = setTimeout(cloudPush, 5000);
+    } finally { Cloud.busy = false; }
+  }
+  // pick up teammates' changes while this person isn't in the middle of editing
+  async function cloudPoll() {
+    if (!Cloud.on || Cloud.dirty || Cloud.busy || drag || document.hidden) return;
+    const a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+    try {
+      const st = await api('/api/state?since=' + Cloud.rev);
+      if (st.unchanged || st.rev === Cloud.rev || Cloud.dirty || Cloud.busy) return;
+      Cloud.rev = st.rev;
+      if (st.data) { applyRemote(st.data); toast('وصلت تعديلات جديدة من الفريق'); }
+    } catch (e) { /* offline for a moment */ }
+  }
+
+  async function cloudMedia() {
+    if (!Cloud.on) return;
+    try {
+      const { items } = await api('/api/media');
+      for (const rec of items) if (!Media.get(rec.id)) await Media.addRemote(rec, rec.url ? mediaSrc(rec.url) : null);
+      const ids = new Set(items.map((x) => x.id));
+      Media.list().forEach((m) => { if (m.remote && !ids.has(m.id)) Media.remove(m.id); });
+    } catch (e) { /* try again on the next round */ }
+  }
+
+  let blobLib = null;
+  function loadBlobClient() {
+    if (window.VercelBlobClient) return Promise.resolve(window.VercelBlobClient);
+    return blobLib || (blobLib = new Promise((res, rej) => {
+      const sc = document.createElement('script');
+      sc.src = 'js/vendor/blob-client.js';
+      sc.onload = () => res(window.VercelBlobClient);
+      sc.onerror = () => { blobLib = null; rej(new Error('blob-client')); };
+      document.head.appendChild(sc);
+    }));
+  }
+  async function cloudUpload(file, id, name, kind) {
+    const { upload } = await loadBlobClient();
+    const ext = (/\.[a-z0-9]{2,5}$/i.exec(name || '') || [''])[0].toLowerCase();
+    const blob = await upload(`knpc/${id}${ext}`, file, {
+      access: 'public', handleUploadUrl: '/api/upload', contentType: file.type || undefined,
+      multipart: file.size > 50 * 1024 * 1024,
+      onUploadProgress: (p) => cloudStatus('saving', `جارٍ رفع «${name}» ${Math.round(p.percentage)}%`),
+    });
+    const { item } = await api('/api/media', jsonBody('POST', { id, kind, name, url: blob.url }));
+    cloudStatus('ok', 'محفوظ أونلاين للفريق');
+    return item;
+  }
+  async function shareText(it) {
+    await api('/api/media', jsonBody('POST', { id: it.id, kind: 'text', name: it.name, spec: it.spec }));
+    it.remote = true; Media.forgetLocal(it.id);
+  }
+  // files added before the team storage existed: copy them up once, in the background
+  async function migrateLocalMedia() {
+    for (const m of Media.list().filter((x) => x.user && !x.remote)) {
+      try {
+        if (m.kind === 'text') await shareText(m);
+        else if (m.file) { await cloudUpload(m.file, m.id, m.name, m.kind); m.remote = true; Media.forgetLocal(m.id); }
+      } catch (e) { cloudStatus('ok', 'محفوظ أونلاين للفريق'); /* stays local; next visit tries again */ }
+    }
+  }
+
   /* =====================================================================
      UI: top bar, status
      ===================================================================== */
@@ -1018,7 +1158,12 @@
       toast(`أُضيف ${list.length === 1 ? 'مثال واحد' : list.length + ' أمثلة'} من الملف`);
     } catch (er) { toast('تعذّرت قراءة الملف. تأكد أنه ملف JSON صادر من هذه الأداة.'); }
   });
-  $('#btnReset').addEventListener('click', () => { $('#resetConfirm').hidden = !$('#resetConfirm').hidden; });
+  $('#btnReset').addEventListener('click', () => {
+    $('#resetText').textContent = Cloud.on
+      ? 'ستُحذف كل الأمثلة عند كل الفريق ويبقى المخطط الأصلي فقط. الملفات المرفوعة تبقى في المكتبة.'
+      : 'ستُحذف كل الأمثلة ويبقى المخطط الأصلي فقط. المحتوى المرفوع يبقى في المكتبة.';
+    $('#resetConfirm').hidden = !$('#resetConfirm').hidden;
+  });
   $('#btnResetYes').addEventListener('click', () => {
     examples = [newExample('المخطط الحالي', knpcPreset(2600))]; ACT = examples[0]; selected = null; use(ACT);
     $('#resetConfirm').hidden = true; commit(); renderDisplay(); toast('تمت العودة للمخطط الأصلي');
@@ -1116,6 +1261,8 @@
     const rm = e.target.closest('[data-rm]');
     if (rm) {
       const id = rm.dataset.rm;
+      const m = Media.get(id);
+      if (Cloud.on && m && m.remote) api('/api/media?id=' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => toast('تعذّر الحذف من التخزين المشترك'));
       S.screens.forEach((s) => { if (s.media === id) s.media = null; });
       if (S.g.media === id) S.g.media = null;
       Media.remove(id); commit(); renderDisplay();
@@ -1138,7 +1285,18 @@
   async function addFiles(files) {
     const out = [];
     for (const f of files) {
-      const it = await Media.addFile(f, f.name);
+      const kind = Media.kindOf(f.type, f.name);
+      let it = null;
+      if (Cloud.on && kind) {
+        try {
+          const rec = await cloudUpload(f, Media.uid(), f.name, kind);
+          it = await Media.addRemote(rec, mediaSrc(rec.url));
+        } catch (e) {
+          toast(`تعذّر رفع «${f.name}» أونلاين، أُضيف على هذا الجهاز فقط`);
+          cloudStatus('err', 'تعذّر رفع ملف · محفوظ على هذا الجهاز');
+          it = await Media.addFile(f, f.name);
+        }
+      } else it = await Media.addFile(f, f.name);
       if (it) out.push(it);
     }
     if (!out.length) toast('اختر ملفات صور أو فيديو فقط');
@@ -1161,6 +1319,7 @@
   $('#tAdd').addEventListener('click', () => {
     const spec = { title: $('#tTitle').value.trim() || 'عنوان', sub: $('#tSub').value.trim(), bg: $('#tBg').value, fg: $('#tFg').value, orient: tOrient };
     const it = Media.addText(spec);
+    if (Cloud.on) shareText(it).catch(() => toast('تعذّر حفظ البطاقة أونلاين، محفوظة على هذا الجهاز'));
     if (selected && S.mode === 'independent') assign(selected, it.id);
     toast('أُضيفت بطاقة النص');
   });
@@ -1342,7 +1501,7 @@
     renderDisplay();
     if (location.hash === '#room') setView('room');
     requestAnimationFrame(frame);
-    Media.restore().then(() => refresh());
+    Media.restore().then(() => refresh()).then(cloudInit);
   }
   boot();
 })();

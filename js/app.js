@@ -679,6 +679,7 @@
       return; // no API here (GitHub Pages, local file): stay local, quietly
     }
     Cloud.on = true; Cloud.rev = st.rev || 0;
+    $('#dropZone small').textContent = 'الملفات تُرفع وتُحفظ أونلاين، ويشوفها كل الفريق';
     $('#shareHint').textContent = 'كل الأمثلة والملفات محفوظة أونلاين، وأي حدا من الفريق بيفتح الرابط بيشوف آخر نسخة. تقدر كمان تنزّل نسخة احتياطية.';
     if (st.data && Array.isArray(st.data.examples) && st.data.examples.length) applyRemote(st.data);
     else { Cloud.dirty = true; await cloudPush(); } // first visit: seed the empty team storage with this browser's examples

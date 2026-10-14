@@ -2,7 +2,7 @@
 import { del } from '@vercel/blob';
 import { guard, json, readJSON, writeJSON } from './_lib.js';
 
-const KEY = 'knpc:media';
+const KEY = 'knpc-museum:media';
 const KINDS = ['image', 'video', 'text'];
 
 export async function GET(request) {

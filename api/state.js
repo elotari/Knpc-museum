@@ -1,7 +1,7 @@
 // The shared plan: every example wall, saved for the whole team.
 import { guard, json, readJSON, writeJSON } from './_lib.js';
 
-const KEY = 'knpc:state';
+const KEY = 'knpc-museum:state'; // prefixed: the Redis database may be shared with other projects
 const MAX_BYTES = 900 * 1024; // stays under Upstash's request size limit
 
 export async function GET(request) {
